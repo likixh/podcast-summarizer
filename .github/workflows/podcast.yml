@@ -1,0 +1,48 @@
+name: 🎙️ 播客精华自动提取
+
+on:
+  schedule:
+    # 每天北京时间早上9点检查一次（UTC 1:00）
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    # 允许在 GitHub 网页上手动点击触发，方便测试
+
+jobs:
+  process-podcast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # 最长运行 6 小时
+
+    steps:
+      - name: 📥 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 🐍 配置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 💾 缓存 Whisper 模型
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          # 模型文件不变，key 固定，永远命中缓存
+          key: whisper-large-v3-int8-${{ runner.os }}
+
+      - name: 🔧 安装系统依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+
+      - name: 📦 安装 Python 依赖
+        run: |
+          pip install --upgrade pip
+          pip install faster-whisper feedparser requests yt-dlp
+
+      - name: 🚀 运行播客处理脚本
+        env:
+          FEISHU_APP_ID:      ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:  ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_TOKEN:   ${{ secrets.FEISHU_APP_TOKEN }}
+          FEISHU_TABLE_ID:    ${{ secrets.FEISHU_TABLE_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: python main.py
