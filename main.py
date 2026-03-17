@@ -17,9 +17,10 @@ FEISHU_APP_TOKEN   = os.environ["FEISHU_APP_TOKEN"]
 FEISHU_TABLE_ID    = os.environ["FEISHU_TABLE_ID"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 
+# 修复：更新为当前可用的免费模型名
 MODELS = [
-    "deepseek/deepseek-chat-v3-0324:free",
-    "qwen/qwen3-4b:free",
+    "deepseek/deepseek-chat:free",
+    "qwen/qwen-2.5-72b-instruct:free",
     "openrouter/free",
 ]
 
@@ -27,6 +28,7 @@ MODELS = [
 # 飞书 API
 # ============================================================
 def get_feishu_token():
+    """每次调用都重新获取，避免长时间任务后 token 过期"""
     resp = requests.post(
         "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
         json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
@@ -38,7 +40,8 @@ def get_feishu_token():
     return data["tenant_access_token"]
 
 
-def get_existing_links(token):
+def get_existing_links():
+    token = get_feishu_token()
     headers = {"Authorization": f"Bearer {token}"}
     url = (
         f"https://open.feishu.cn/open-apis/bitable/v1/"
@@ -51,7 +54,9 @@ def get_existing_links(token):
     return {r["fields"].get("原链接", "") for r in records}
 
 
-def write_to_feishu(token, fields):
+def write_to_feishu(fields):
+    # 写入前重新获取 token，避免转录耗时导致 token 过期
+    token = get_feishu_token()
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
@@ -173,13 +178,10 @@ def main():
     print(f"  链接：{episode_url}")
 
     print("\n🔍 飞书去重检查...")
-    feishu_token   = get_feishu_token()
-    existing_links = get_existing_links(feishu_token)
-
+    existing_links = get_existing_links()
     if episode_url in existing_links:
         print("  已处理过，退出")
         return
-
     print("  新内容，开始处理！")
 
     print("\n⬇️  下载音频...")
@@ -205,7 +207,7 @@ def main():
         "处理状态": "已完成",
     }
 
-    result = write_to_feishu(feishu_token, fields)
+    result = write_to_feishu(fields)
     record_id = result.get("data", {}).get("record", {}).get("record_id", "未知")
     print(f"\n✅ 完成！记录 ID：{record_id}")
 
