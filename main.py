@@ -9,15 +9,14 @@ import tempfile
 # ============================================================
 # 配置
 # ============================================================
-RSS_URL = "https://www.ximalaya.com/album/80074602.xml"
-
+RSS_URL            = "https://www.ximalaya.com/album/80074602.xml"
 FEISHU_APP_ID      = os.environ["FEISHU_APP_ID"]
 FEISHU_APP_SECRET  = os.environ["FEISHU_APP_SECRET"]
 FEISHU_APP_TOKEN   = os.environ["FEISHU_APP_TOKEN"]
 FEISHU_TABLE_ID    = os.environ["FEISHU_TABLE_ID"]
 OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
+FEISHU_WEBHOOK     = os.environ["FEISHU_WEBHOOK"]
 
-# 修复：更新为当前可用的免费模型名
 MODELS = [
     "deepseek/deepseek-chat:free",
     "qwen/qwen-2.5-72b-instruct:free",
@@ -28,7 +27,6 @@ MODELS = [
 # 飞书 API
 # ============================================================
 def get_feishu_token():
-    """每次调用都重新获取，避免长时间任务后 token 过期"""
     resp = requests.post(
         "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
         json={"app_id": FEISHU_APP_ID, "app_secret": FEISHU_APP_SECRET},
@@ -41,13 +39,14 @@ def get_feishu_token():
 
 
 def get_existing_links():
+    """获取飞书表格中已有的所有原链接，用于去重"""
     token = get_feishu_token()
     headers = {"Authorization": f"Bearer {token}"}
     url = (
         f"https://open.feishu.cn/open-apis/bitable/v1/"
         f"apps/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
     )
-    resp = requests.get(url, headers=headers, params={"page_size": 100}, timeout=10)
+    resp = requests.get(url, headers=headers, params={"page_size": 500}, timeout=10)
     data = resp.json()
     print(f"  查询记录：code={data.get('code')} msg={data.get('msg')}")
     records = data.get("data", {}).get("items", [])
@@ -55,7 +54,7 @@ def get_existing_links():
 
 
 def write_to_feishu(fields):
-    # 写入前重新获取 token，避免转录耗时导致 token 过期
+    """写入前重新获取 token，避免转录耗时导致 token 过期"""
     token = get_feishu_token()
     headers = {
         "Authorization": f"Bearer {token}",
@@ -71,6 +70,38 @@ def write_to_feishu(fields):
     print(f"  飞书响应：{json.dumps(data, ensure_ascii=False)[:400]}")
     resp.raise_for_status()
     return data
+
+
+def send_feishu_notification(title, date, link):
+    """通过群机器人发送更新通知"""
+    msg = {
+        "msg_type": "interactive",
+        "card": {
+            "elements": [
+                {
+                    "tag": "div",
+                    "text": {
+                        "tag": "lark_md",
+                        "content": (
+                            f"**📚 播客新内容已入库！**\n\n"
+                            f"**标题：** {title}\n"
+                            f"**发布日期：** {date}\n"
+                            f"**链接：** {link}"
+                        )
+                    }
+                }
+            ],
+            "header": {
+                "title": {
+                    "tag": "plain_text",
+                    "content": "🎙️ 自习室播客精华更新"
+                },
+                "template": "blue"
+            }
+        }
+    }
+    resp = requests.post(FEISHU_WEBHOOK, json=msg, timeout=10)
+    print(f"  机器人通知：{resp.json()}")
 
 
 # ============================================================
@@ -109,14 +140,33 @@ def summarize(transcript, episode_title):
     content = transcript[:12000]
     prompt = f"""这是一档读书类播客的完整文字稿，本集标题是：{episode_title}
 
-请仔细阅读，以 JSON 格式返回。只返回 JSON，不要任何解释，不要 markdown 代码块。
+请仔细阅读，以 JSON 格式返回分析结果。
+
+重要提示：
+- "书单"字段请特别留意文字稿中所有被提及的书名，包括主讲书和顺带提到的其他书，哪怕只提了一次也要收录
+- 只返回 JSON，不要任何解释文字，不要 markdown 代码块
 
 {{
-  "拆解书名": "本集拆解的书名",
-  "核心认知": ["认知点1", "认知点2", "认知点3", "认知点4", "认知点5"],
-  "金句": ["金句1", "金句2", "金句3"],
-  "书单": ["提到的其他书名1", "书名2"],
-  "行动建议": ["行动建议1", "建议2"]
+  "拆解书名": "本集重点拆解的那本书的书名",
+  "核心认知": [
+    "认知点1（一句话，要有具体信息）",
+    "认知点2",
+    "认知点3",
+    "认知点4",
+    "认知点5"
+  ],
+  "金句": [
+    "值得摘录的金句或精彩观点1",
+    "金句2",
+    "金句3"
+  ],
+  "书单": [
+    "文中提到的所有书名，包括主讲书和顺带提及的书，每个单独一条"
+  ],
+  "行动建议": [
+    "对听众的具体可执行建议1",
+    "建议2"
+  ]
 }}
 
 文字稿：
@@ -157,32 +207,15 @@ def summarize(transcript, episode_title):
 
 
 # ============================================================
-# 主流程
+# 处理单集
 # ============================================================
-def main():
-    print("=" * 50)
-    print("🎙️ 播客精华提取器启动")
-    print("=" * 50)
+def process_episode(episode):
+    episode_url   = episode.get("link", "")
+    episode_title = episode.get("title", "未知标题")
+    episode_date  = episode.get("published", "")
 
-    print("\n📡 检查 RSS...")
-    feed = feedparser.parse(RSS_URL)
-    if not feed.entries:
-        print("RSS 无内容，退出")
-        return
-
-    latest        = feed.entries[0]
-    episode_url   = latest.get("link", "")
-    episode_title = latest.get("title", "未知标题")
-    episode_date  = latest.get("published", "")
-    print(f"  最新一集：{episode_title}")
+    print(f"\n  处理：{episode_title}")
     print(f"  链接：{episode_url}")
-
-    print("\n🔍 飞书去重检查...")
-    existing_links = get_existing_links()
-    if episode_url in existing_links:
-        print("  已处理过，退出")
-        return
-    print("  新内容，开始处理！")
 
     print("\n⬇️  下载音频...")
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -206,10 +239,63 @@ def main():
         "完整转录": transcript[:50000],
         "处理状态": "已完成",
     }
-
     result = write_to_feishu(fields)
     record_id = result.get("data", {}).get("record", {}).get("record_id", "未知")
-    print(f"\n✅ 完成！记录 ID：{record_id}")
+    print(f"  记录 ID：{record_id}")
+
+    print("\n🔔 发送飞书通知...")
+    send_feishu_notification(episode_title, episode_date, episode_url)
+
+    return True
+
+
+# ============================================================
+# 主流程
+# ============================================================
+def main():
+    print("=" * 50)
+    print("🎙️ 播客精华提取器启动")
+    print("=" * 50)
+
+    print("\n📡 拉取 RSS...")
+    feed = feedparser.parse(RSS_URL)
+    if not feed.entries:
+        print("RSS 无内容，退出")
+        return
+
+    print(f"  共获取 {len(feed.entries)} 集")
+
+    print("\n🔍 飞书去重检查...")
+    existing_links = get_existing_links()
+    print(f"  飞书已有 {len(existing_links)} 条记录")
+
+    # 找出所有未处理过的集，按 RSS 顺序（最新在前）
+    unprocessed = [
+        ep for ep in feed.entries
+        if ep.get("link", "") not in existing_links
+    ]
+
+    if not unprocessed:
+        print("\n✅ 所有集均已处理，无需操作")
+        return
+
+    print(f"  共 {len(unprocessed)} 集未处理")
+
+    # 每次只处理一集：
+    # 优先处理最老的未处理集（从后往前回填历史）
+    # 当最新集是新内容时，优先处理最新集
+    latest_ep = feed.entries[0]
+    if latest_ep.get("link", "") not in existing_links:
+        # 最新集是新发布的，优先处理
+        target = latest_ep
+        print(f"\n🆕 发现新集，优先处理最新集")
+    else:
+        # 没有新集，处理最老的未处理集（历史回填）
+        target = unprocessed[-1]
+        print(f"\n📚 无新集，回填历史集")
+
+    process_episode(target)
+    print("\n✅ 本次运行完成！")
 
 
 if __name__ == "__main__":
