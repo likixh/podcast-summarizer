@@ -45,4 +45,5 @@ jobs:
           FEISHU_APP_TOKEN:   ${{ secrets.FEISHU_APP_TOKEN }}
           FEISHU_TABLE_ID:    ${{ secrets.FEISHU_TABLE_ID }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FEISHU_WEBHOOK:     ${{ secrets.FEISHU_WEBHOOK }}
         run: python main.py
