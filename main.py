@@ -282,7 +282,7 @@ def main():
     print(f"  共 {len(unprocessed)} 集未处理")
 
     # 每次只处理一集：
-    # 优先处理最老的未处理集（从后往前回填历史）
+    # 优先处理最新的未处理集（从后往前回填历史）
     # 当最新集是新内容时，优先处理最新集
     latest_ep = feed.entries[0]
     if latest_ep.get("link", "") not in existing_links:
@@ -290,8 +290,8 @@ def main():
         target = latest_ep
         print(f"\n🆕 发现新集，优先处理最新集")
     else:
-        # 没有新集，处理最老的未处理集（历史回填）
-        target = unprocessed[-1]
+        # 没有新集，处理最新的未处理集（历史回填）
+        target = unprocessed[0]
         print(f"\n📚 无新集，回填历史集")
 
     process_episode(target)
