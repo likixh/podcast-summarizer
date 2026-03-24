@@ -28,12 +28,6 @@ MODELS = [
 # 从 RSS 简介提取 Highlights 和书单
 # ============================================================
 def extract_from_description(entry):
-    """
-    从 RSS 简介中提取：
-    - Highlights 段落 → 金句
-    - 本期学习推荐 段落 → 书单
-    返回 (highlights, booklist)，均为字符串，未找到则为空字符串
-    """
     description = ""
     if hasattr(entry, "summary"):
         description = entry.summary
@@ -51,30 +45,51 @@ def extract_from_description(entry):
     description = re.sub(r"\r\n", "\n", description)
     description = re.sub(r"\n{3,}", "\n\n", description)
 
-    print(f"  RSS 简介（前600字）：\n{description[:600]}\n")
+    print(f"  RSS 简介（前800字）：\n{description[:800]}\n")
 
-    # 提取 Highlights
+    # ── 提取 Highlights ──────────────────────────────────────
+    # 从 Highlights 开始，到第一个时间戳（如 00:03:21）为止
     highlights = ""
     match = re.search(
-        r"[Hh]ighlights[：:\s]*\n([\s\S]+?)(?:\n\n|本期|$)", description
+        r"[Hh]ighlights[：:\s]*\n([\s\S]+?)(?=\n\d{2,3}:\d{2}|\Z)",
+        description
     )
     if match:
-        lines = [l.strip() for l in match.group(1).split("\n") if l.strip()]
+        raw = match.group(1).strip()
+        lines = [l.strip() for l in raw.split("\n") if l.strip()]
         highlights = "\n".join(f"• {l.lstrip('•·-· ')}" for l in lines)
         print(f"  ✅ 提取到 Highlights：{len(lines)} 条")
+        print(f"  Highlights 内容：\n{highlights}\n")
     else:
         print("  ℹ️  未找到 Highlights，将用 AI 提取金句")
 
-    # 提取本期学习推荐
+    # ── 提取本期学习推荐（书名含《》）────────────────────────
+    # 取"本期学习推荐"段落，提取所有《书名》
     booklist = ""
     match2 = re.search(
-        r"本期学习推荐[：:\s]*\n([\s\S]+?)(?:\n\n|Highlights|[Hh]ighlights|$)",
+        r"本期学习推荐[：:\s]*\n([\s\S]+?)(?:\n\n|[Hh]ighlights|\Z)",
         description
     )
     if match2:
-        lines2 = [l.strip() for l in match2.group(1).split("\n") if l.strip()]
-        booklist = "\n".join(f"• {l.lstrip('•·-· ')}" for l in lines2)
-        print(f"  ✅ 提取到书单：{len(lines2)} 条")
+        section = match2.group(1)
+        # 提取所有书引号内的书名，格式：《书名》或《书名》作者名
+        books = re.findall(r"《([^》]+)》([^\n]*)", section)
+        if books:
+            booklist_lines = []
+            for title, author in books:
+                author = author.strip().lstrip("，,、 ")
+                if author:
+                    booklist_lines.append(f"• 《{title}》{author}")
+                else:
+                    booklist_lines.append(f"• 《{title}》")
+            booklist = "\n".join(booklist_lines)
+            print(f"  ✅ 提取到书单：{len(booklist_lines)} 本")
+            print(f"  书单内容：\n{booklist}\n")
+        else:
+            # 没有书名号，按行提取
+            lines2 = [l.strip() for l in match2.group(1).split("\n") if l.strip()]
+            booklist = "\n".join(f"• {l.lstrip('•·-· ')}" for l in lines2)
+            print(f"  ✅ 提取到书单（无书名号格式）：{len(lines2)} 条")
     else:
         print("  ℹ️  未找到本期学习推荐，将用 AI 提取书单")
 
@@ -181,8 +196,8 @@ def transcribe(audio_path):
         language="zh",
         beam_size=5,
         initial_prompt="以下是一档中文读书播客节目的内容。",
-        condition_on_previous_text=False,  # 防止音乐段触发循环幻觉
-        no_speech_threshold=0.6,           # 跳过纯音乐/静音段
+        condition_on_previous_text=False,
+        no_speech_threshold=0.6,
     )
     transcript = "".join(seg.text for seg in segments)
     print(f"  转录完成，共 {len(transcript)} 字")
@@ -195,8 +210,8 @@ def transcribe(audio_path):
 def summarize(transcript, episode_title, need_quotes=True, need_booklist=True):
     content = transcript[:12000]
 
-    quotes_field = '"金句": ["金句1", "金句2", "金句3"],' if need_quotes else '"金句": [],'
-    booklist_field = '"书单": ["文中提到的所有书名，每本单独一条"]' if need_booklist else '"书单": []'
+    quotes_field    = '"金句": ["金句1", "金句2", "金句3"],' if need_quotes    else '"金句": [],'
+    booklist_field  = '"书单": ["文中提到的所有书名，每本单独一条"]'            if need_booklist else '"书单": []'
 
     prompt = f"""这是一档读书类播客的完整文字稿，本集标题是：{episode_title}
 
@@ -270,7 +285,7 @@ def process_episode(episode):
         print("\n🎙️  转录音频...")
         transcript = transcribe(audio_path)
 
-    # 3. AI 总结（RSS 已有的字段不让 AI 重复提取，节省 token）
+    # 3. AI 总结（RSS 已有的不重复提取）
     print("\n🤖 AI 总结...")
     summary = summarize(
         transcript, episode_title,
@@ -278,7 +293,7 @@ def process_episode(episode):
         need_booklist=(not rss_booklist),
     )
 
-    # 4. 合并：RSS 有就用 RSS 的，没有用 AI 提取的
+    # 4. 合并：RSS 有就用 RSS，没有用 AI
     final_quotes   = highlights   or "\n".join(f"• {x}" for x in summary.get("金句", []))
     final_booklist = rss_booklist or "\n".join(f"• {x}" for x in summary.get("书单", []))
 
@@ -302,8 +317,6 @@ def process_episode(episode):
     # 6. 飞书通知
     print("\n🔔 发送飞书通知...")
     send_feishu_notification(episode_title, episode_date, episode_url)
-
-    return True
 
 
 # ============================================================
@@ -342,7 +355,7 @@ def main():
         target = latest_ep
         print("\n🆕 发现新集，优先处理最新集")
     else:
-        target = unprocessed[0]  # 最近的未处理集
+        target = unprocessed[0]
         print("\n📚 无新集，回填历史集")
 
     process_episode(target)
