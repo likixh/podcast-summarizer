@@ -19,15 +19,15 @@ OPENROUTER_API_KEY = os.environ["OPENROUTER_API_KEY"]
 FEISHU_WEBHOOK     = os.environ["FEISHU_WEBHOOK"]
 
 MODELS = [
-    "google/gemini-2.0-flash-exp:free",
-    "meta-llama/llama-4-scout:free",
+    "deepseek/deepseek-r1-0528:free",
+    "qwen/qwen3-235b-a22b:free",
     "openrouter/free",
 ]
 
 # ============================================================
-# 从 RSS 简介提取 Highlights 和书单
+# 从 RSS 简介提取所有信息
 # ============================================================
-def extract_from_description(entry):
+def extract_from_description(entry, episode_title):
     description = ""
     if hasattr(entry, "summary"):
         description = entry.summary
@@ -35,7 +35,7 @@ def extract_from_description(entry):
         description = entry.content[0].get("value", "")
 
     if not description:
-        return "", ""
+        return "", "", "", ""
 
     # 清理 HTML
     description = re.sub(r"<[^>]+>", "\n", description)
@@ -45,55 +45,68 @@ def extract_from_description(entry):
     description = re.sub(r"\r\n", "\n", description)
     description = re.sub(r"\n{3,}", "\n\n", description)
 
-    print(f"  RSS 简介（前800字）：\n{description[:800]}\n")
+    print(f"  RSS 简介（前1000字）：\n{description[:1000]}\n")
 
-    # ── 提取 Highlights ──────────────────────────────────────
-    # 从 Highlights 开始，到第一个时间戳（如 00:03:21）为止
+    # ── 1. 拆解书名：优先从标题提取《书名》，否则从简介第一个《》提取 ──
+    book_name = ""
+    title_match = re.search(r"《([^》]+)》", episode_title)
+    if title_match:
+        book_name = title_match.group(1)
+    else:
+        # 标题里没有书名号，用竖线前的关键词
+        title_core = re.sub(r"^\d+\s*", "", episode_title)  # 去掉集数
+        title_core = title_core.split("｜")[0].split("|")[0].strip()
+        book_name = title_core
+    print(f"  ✅ 拆解书名：{book_name}")
+
+    # ── 2. Highlights：匹配 Highlights 到第一个时间戳之间的内容 ──
     highlights = ""
+    # 兼容：Highlights、Highlights（*为引用）、highlights: 等变体
     match = re.search(
-        r"[Hh]ighlights[：:\s]*\n([\s\S]+?)(?=\n\d{2,3}:\d{2}|\Z)",
+        r"[Hh]ighlights[^\\n]*\n+([\s\S]+?)(?=\n\d{1,3}:\d{2}|\Z)",
         description
     )
     if match:
         raw = match.group(1).strip()
         lines = [l.strip() for l in raw.split("\n") if l.strip()]
-        highlights = "\n".join(f"• {l.lstrip('•·-· ')}" for l in lines)
-        print(f"  ✅ 提取到 Highlights：{len(lines)} 条")
-        print(f"  Highlights 内容：\n{highlights}\n")
+        # 去掉行首的各种符号（·、•、-、*等）
+        cleaned = [re.sub(r"^[·•\-\*\uff65]+\s*", "", l) for l in lines]
+        # 去掉行尾的 * 标注
+        cleaned = [l.rstrip("*").strip() for l in cleaned if l]
+        highlights = "\n".join(f"• {l}" for l in cleaned)
+        print(f"  ✅ 提取到 Highlights：{len(cleaned)} 条")
+        print(f"  内容：\n{highlights}\n")
     else:
-        print("  ℹ️  未找到 Highlights，将用 AI 提取金句")
+        print("  ℹ️  未找到 Highlights")
 
-    # ── 提取本期学习推荐（书名含《》）────────────────────────
-    # 取"本期学习推荐"段落，提取所有《书名》
-    booklist = ""
-    match2 = re.search(
-        r"本期学习推荐[：:\s]*\n([\s\S]+?)(?:\n\n|[Hh]ighlights|\Z)",
-        description
+    # ── 3. 核心认知：从时间戳列表直接提取，格式 "00:04:20 内容" ──
+    core_insights = ""
+    timestamp_matches = re.findall(
+        r"\n\d{1,3}:\d{2}(?::\d{2})?\s+(.+)", description
     )
-    if match2:
-        section = match2.group(1)
-        # 提取所有书引号内的书名，格式：《书名》或《书名》作者名
-        books = re.findall(r"《([^》]+)》([^\n]*)", section)
-        if books:
-            booklist_lines = []
-            for title, author in books:
-                author = author.strip().lstrip("，,、 ")
-                if author:
-                    booklist_lines.append(f"• 《{title}》{author}")
-                else:
-                    booklist_lines.append(f"• 《{title}》")
-            booklist = "\n".join(booklist_lines)
-            print(f"  ✅ 提取到书单：{len(booklist_lines)} 本")
-            print(f"  书单内容：\n{booklist}\n")
-        else:
-            # 没有书名号，按行提取
-            lines2 = [l.strip() for l in match2.group(1).split("\n") if l.strip()]
-            booklist = "\n".join(f"• {l.lstrip('•·-· ')}" for l in lines2)
-            print(f"  ✅ 提取到书单（无书名号格式）：{len(lines2)} 条")
+    if timestamp_matches:
+        # 过滤太短的（少于8字可能是噪音）
+        valid = [t.strip() for t in timestamp_matches if len(t.strip()) >= 8]
+        core_insights = "\n".join(f"• {t}" for t in valid)
+        print(f"  ✅ 从时间戳提取核心认知：{len(valid)} 条")
+        print(f"  内容：\n{core_insights[:300]}\n")
     else:
-        print("  ℹ️  未找到本期学习推荐，将用 AI 提取书单")
+        print("  ℹ️  未找到时间戳，核心认知将由 AI 提取")
 
-    return highlights, booklist
+    # ── 4. 书单：从全文提取所有《书名》，排除拆解书名本身 ──
+    all_books = re.findall(r"《([^》]+)》", description)
+    # 去重，排除主讲书
+    unique_books = list(dict.fromkeys(
+        b for b in all_books if b != book_name
+    ))
+    booklist = "\n".join(f"• 《{b}》" for b in unique_books)
+    if booklist:
+        print(f"  ✅ 提取到书单：{len(unique_books)} 本")
+        print(f"  内容：\n{booklist}\n")
+    else:
+        print("  ℹ️  未找到其他书单，将由 AI 提取")
+
+    return book_name, highlights, core_insights, booklist
 
 
 # ============================================================
@@ -147,20 +160,18 @@ def send_feishu_notification(title, date, link):
     msg = {
         "msg_type": "interactive",
         "card": {
-            "elements": [
-                {
-                    "tag": "div",
-                    "text": {
-                        "tag": "lark_md",
-                        "content": (
-                            f"**📚 播客新内容已入库！**\n\n"
-                            f"**标题：** {title}\n"
-                            f"**发布日期：** {date}\n"
-                            f"**链接：** {link}"
-                        )
-                    }
+            "elements": [{
+                "tag": "div",
+                "text": {
+                    "tag": "lark_md",
+                    "content": (
+                        f"**📚 播客新内容已入库！**\n\n"
+                        f"**标题：** {title}\n"
+                        f"**发布日期：** {date}\n"
+                        f"**链接：** {link}"
+                    )
                 }
-            ],
+            }],
             "header": {
                 "title": {"tag": "plain_text", "content": "🎙️ 自习室播客精华更新"},
                 "template": "blue"
@@ -205,25 +216,34 @@ def transcribe(audio_path):
 
 
 # ============================================================
-# AI 总结
+# AI 总结（仅用于补充 RSS 没有的字段）
 # ============================================================
-def summarize(transcript, episode_title, need_quotes=True, need_booklist=True):
-    content = transcript[:12000]
+def summarize_with_ai(transcript, episode_title, need_quotes, need_booklist, need_insights):
+    """只在 RSS 提取不到时才调用 AI"""
+    if not need_quotes and not need_booklist and not need_insights:
+        print("  RSS 已提供全部字段，跳过 AI 总结")
+        return {}
 
-    quotes_field    = '"金句": ["金句1", "金句2", "金句3"],' if need_quotes    else '"金句": [],'
-    booklist_field  = '"书单": ["文中提到的所有书名，每本单独一条"]'            if need_booklist else '"书单": []'
+    content = transcript[:12000]
+    fields_needed = []
+    json_template = {}
+
+    if need_insights:
+        fields_needed.append("核心认知")
+        json_template["核心认知"] = ["认知点1", "认知点2", "认知点3", "认知点4", "认知点5"]
+    if need_quotes:
+        fields_needed.append("金句")
+        json_template["金句"] = ["金句1", "金句2", "金句3"]
+    if need_booklist:
+        fields_needed.append("书单")
+        json_template["书单"] = ["书名1", "书名2"]
 
     prompt = f"""这是一档读书类播客的完整文字稿，本集标题是：{episode_title}
 
-请仔细阅读，以 JSON 格式返回分析结果。只返回 JSON，不要任何解释，不要 markdown 代码块。
+请提取以下字段：{', '.join(fields_needed)}
+只返回 JSON，不要任何解释，不要 markdown 代码块。
 
-{{
-  "拆解书名": "本集重点拆解的书名",
-  "核心认知": ["认知点1", "认知点2", "认知点3", "认知点4", "认知点5"],
-  {quotes_field}
-  {booklist_field},
-  "行动建议": ["可执行建议1", "建议2"]
-}}
+{json.dumps(json_template, ensure_ascii=False, indent=2)}
 
 文字稿：
 {content}"""
@@ -249,16 +269,26 @@ def summarize(transcript, episode_title, need_quotes=True, need_booklist=True):
             print(f"  API 响应：{json.dumps(resp_json, ensure_ascii=False)[:400]}")
             if "choices" not in resp_json:
                 raise ValueError(f"无 choices：{resp_json}")
-            raw = resp_json["choices"][0]["message"]["content"]
+
+            # 处理部分模型返回 content=null 但有 reasoning 的情况
+            message = resp_json["choices"][0]["message"]
+            raw = message.get("content") or message.get("reasoning") or ""
+            if not raw:
+                raise ValueError("content 和 reasoning 均为空")
+
             raw = raw.strip().replace("```json", "").replace("```", "").strip()
+            # 找到第一个 { 开始解析，跳过可能的前缀文字
+            json_start = raw.find("{")
+            if json_start > 0:
+                raw = raw[json_start:]
             result = json.loads(raw)
-            print(f"  总结成功（{model_name}）")
+            print(f"  AI 总结成功（{model_name}）")
             return result
         except Exception as e:
             print(f"  {model_name} 失败：{e}")
             time.sleep(5)
 
-    print("  所有模型失败，返回空摘要")
+    print("  所有模型失败，返回空")
     return {}
 
 
@@ -273,9 +303,11 @@ def process_episode(episode):
     print(f"\n  处理：{episode_title}")
     print(f"  链接：{episode_url}")
 
-    # 1. 从 RSS 提取金句和书单
+    # 1. 从 RSS 提取所有字段
     print("\n📋 解析 RSS 简介...")
-    highlights, rss_booklist = extract_from_description(episode)
+    book_name, highlights, core_insights, booklist = extract_from_description(
+        episode, episode_title
+    )
 
     # 2. 下载 + 转录
     print("\n⬇️  下载音频...")
@@ -285,26 +317,29 @@ def process_episode(episode):
         print("\n🎙️  转录音频...")
         transcript = transcribe(audio_path)
 
-    # 3. AI 总结（RSS 已有的不重复提取）
-    print("\n🤖 AI 总结...")
-    summary = summarize(
+    # 3. AI 补充（只补 RSS 缺失的字段）
+    print("\n🤖 AI 补充缺失字段...")
+    ai_result = summarize_with_ai(
         transcript, episode_title,
         need_quotes=(not highlights),
-        need_booklist=(not rss_booklist),
+        need_booklist=(not booklist),
+        need_insights=(not core_insights),
     )
 
-    # 4. 合并：RSS 有就用 RSS，没有用 AI
-    final_quotes   = highlights   or "\n".join(f"• {x}" for x in summary.get("金句", []))
-    final_booklist = rss_booklist or "\n".join(f"• {x}" for x in summary.get("书单", []))
+    # 4. 合并：RSS 优先，AI 兜底
+    final_book     = book_name     or ai_result.get("拆解书名", "（待解析）")
+    final_insights = core_insights or "\n".join(f"• {x}" for x in ai_result.get("核心认知", []))
+    final_quotes   = highlights    or "\n".join(f"• {x}" for x in ai_result.get("金句", []))
+    final_booklist = booklist      or "\n".join(f"• {x}" for x in ai_result.get("书单", []))
 
     # 5. 写入飞书
     print("\n📝 写入飞书...")
     fields = {
-        "拆解书名": summary.get("拆解书名", "（待解析）"),
+        "拆解书名": final_book,
         "标题":     episode_title,
         "发布日期": episode_date,
         "原链接":   episode_url,
-        "核心认知": "\n".join(f"• {x}" for x in summary.get("核心认知", [])),
+        "核心认知": final_insights,
         "金句":     final_quotes,
         "书单":     final_booklist,
         "完整转录": transcript[:50000],
@@ -349,7 +384,6 @@ def main():
 
     print(f"  共 {len(unprocessed)} 集未处理")
 
-    # 有新集优先处理新集，否则从最近的未处理集往前回填
     latest_ep = feed.entries[0]
     if latest_ep.get("link", "") not in existing_links:
         target = latest_ep
