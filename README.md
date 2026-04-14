@@ -1,57 +1,168 @@
-# 🎙️ 播客精华自动提取器
+# Podcast Summarizer / 播客精华自动提取器
 
-自动监控网易云音乐播客，转录全文并用 AI 提取核心认知，存入飞书多维表格。
+<p align="center">
+  <a href="#zh"><kbd>中文</kbd></a>
+  <a href="#en"><kbd>English</kbd></a>
+</p>
 
-## 技术栈
+<a id="zh"></a>
+
+## 中文
+
+自动监控播客 RSS，下载新节目音频，使用 Faster-Whisper 本地转录全文，再结合 RSS 简介和 AI 提取核心认知、金句、书单等结构化信息，最后写入飞书多维表格并发送飞书通知。
+
+这个项目适合把长音频播客沉淀成可检索、可复盘的个人知识库。当前默认 RSS 源在 `main.py` 的 `RSS_URL` 中配置。
+
+### 功能亮点
+
+- 自动读取播客 RSS，并根据飞书中已有链接跳过重复节目
+- 使用 `yt-dlp` 下载音频，并通过 `ffmpeg` 转成适合转录的格式
+- 使用 Faster-Whisper `large-v3` 在本地完成中文语音转文字
+- 优先从 RSS 简介提取书名、Highlights、时间戳认知点和提到的书籍
+- 当 RSS 信息不完整时，通过 OpenRouter 免费模型补充缺失字段
+- 将标题、发布时间、原链接、核心认知、金句、书单和完整转录写入飞书多维表格
+- 处理完成后通过飞书机器人发送通知
+- 通过 GitHub Actions 每天自动运行，也支持手动触发
+
+### 技术栈
 
 | 环节 | 工具 | 费用 |
-|------|------|------|
-| RSS 监控 | feedparser + RSSHub | 免费 |
-| 音频下载 | yt-dlp | 免费 |
-| 语音转文字 | Faster-Whisper large-v3 | 完全免费（本地运行）|
-| AI 总结 | OpenRouter 免费模型 | 完全免费 |
+| --- | --- | --- |
+| RSS 监控 | `feedparser` + 播客 RSS | 免费 |
+| 音频下载 | `yt-dlp` | 免费 |
+| 音频处理 | `ffmpeg` | 免费 |
+| 语音转文字 | Faster-Whisper `large-v3` | 免费，本地运行 |
+| AI 补充 | OpenRouter 免费模型 | 免费额度 |
 | 数据存储 | 飞书多维表格 | 免费 |
-| 自动运行 | GitHub Actions | 免费（公开仓库无限分钟）|
+| 自动运行 | GitHub Actions | 公开仓库免费 |
 
-## 配置步骤
+### 配置步骤
 
-### 1. Fork 或 Clone 本仓库
+#### 1. Fork 或 Clone 本仓库
 
-### 2. 在 GitHub 仓库设置 Secrets
+将仓库 Fork 到自己的 GitHub 账号，或直接 Clone 到本地修改。
 
-进入仓库 → Settings → Secrets and variables → Actions → New repository secret
+#### 2. 配置 GitHub Actions Secrets
 
-需要添加以下 5 个 Secrets：
+进入仓库的 `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`，添加以下 Secrets：
 
 | Secret 名称 | 说明 |
-|------------|------|
+| --- | --- |
 | `FEISHU_APP_ID` | 飞书自建应用的 App ID |
 | `FEISHU_APP_SECRET` | 飞书自建应用的 App Secret |
-| `FEISHU_APP_TOKEN` | 多维表格 URL 中的 token（/base/ 后面那段）|
-| `FEISHU_TABLE_ID` | 多维表格 URL 中的 table 参数（tbl 开头）|
-| `OPENROUTER_API_KEY` | OpenRouter 的 API Key（sk-or-v1-...）|
+| `FEISHU_APP_TOKEN` | 飞书多维表格 URL 中 `/base/` 后面的 token |
+| `FEISHU_TABLE_ID` | 飞书多维表格 URL 中以 `tbl` 开头的 table 参数 |
+| `FEISHU_WEBHOOK` | 飞书机器人 Webhook 地址 |
+| `OPENROUTER_API_KEY` | OpenRouter API Key，通常以 `sk-or-v1-` 开头 |
 
-### 3. 飞书多维表格列结构
+#### 3. 创建飞书多维表格字段
 
-表格需要包含以下列（均为文本类型）：
+飞书表格需要包含以下字段，建议均设为文本类型：
 
-- 拆解书名
-- 标题
-- 发布日期
-- 原链接
-- 核心认知
-- 金句
-- 书单
-- 完整转录
-- 处理状态
+| 字段名 | 内容 |
+| --- | --- |
+| `拆解书名` | 本集主要拆解的书名或主题 |
+| `标题` | 播客单集标题 |
+| `发布日期` | 播客发布时间 |
+| `原链接` | 播客原始链接，用于去重 |
+| `核心认知` | RSS 时间戳或 AI 提取的核心观点 |
+| `金句` | Highlights 或 AI 提取的引用/金句 |
+| `书单` | 本集提到的其他书籍 |
+| `完整转录` | Faster-Whisper 生成的全文转录 |
+| `处理状态` | 当前处理状态 |
 
-### 4. 触发运行
+#### 4. 触发运行
 
-- **自动触发**：每天北京时间早上 9 点自动检查更新
-- **手动触发**：GitHub 仓库 → Actions → 选择 workflow → Run workflow
+- 自动触发：GitHub Actions 每天 UTC 01:00 运行一次，即北京时间上午 9 点。
+- 手动触发：进入 GitHub 仓库的 `Actions` 页面，选择工作流后点击 `Run workflow`。
 
-## 注意事项
+### 注意事项
 
-- 首次运行会下载 Whisper large-v3 模型（约 3GB），之后从缓存读取
-- 85 分钟音频完整处理约需 30-90 分钟
-- 已处理过的集数会自动跳过，不会重复写入
+- 首次运行会下载 Faster-Whisper `large-v3` 模型，大小约 3GB，后续会从缓存读取。
+- 长音频处理时间较久，85 分钟节目完整处理大约需要 30-90 分钟。
+- 已写入飞书的节目会通过 `原链接` 自动去重，不会重复入库。
+- 如果要处理其他播客，修改 `main.py` 中的 `RSS_URL` 即可。
+
+<p align="right"><a href="#top"><kbd>回到顶部</kbd></a></p>
+
+---
+
+<a id="en"></a>
+
+## English
+
+Podcast Summarizer automatically monitors a podcast RSS feed, downloads new episode audio, transcribes the full episode locally with Faster-Whisper, extracts structured insights from the RSS description and AI, then saves the result to Feishu Base and sends a Feishu notification.
+
+It is designed for turning long-form podcast episodes into a searchable personal knowledge base. The default feed is configured in `main.py` as `RSS_URL`.
+
+### Features
+
+- Polls a podcast RSS feed and skips episodes that already exist in Feishu
+- Downloads audio with `yt-dlp` and prepares it with `ffmpeg`
+- Transcribes Chinese audio locally with Faster-Whisper `large-v3`
+- Extracts book names, highlights, timestamped insights, and referenced books from RSS first
+- Uses free OpenRouter models as a fallback when RSS metadata is incomplete
+- Saves titles, publish dates, source links, insights, quotes, book lists, and full transcripts to Feishu Base
+- Sends a Feishu bot notification after each successful import
+- Runs automatically with GitHub Actions and can also be triggered manually
+
+### Tech Stack
+
+| Stage | Tool | Cost |
+| --- | --- | --- |
+| RSS monitoring | `feedparser` + podcast RSS | Free |
+| Audio download | `yt-dlp` | Free |
+| Audio processing | `ffmpeg` | Free |
+| Speech-to-text | Faster-Whisper `large-v3` | Free, local runtime |
+| AI fallback | Free OpenRouter models | Free tier |
+| Data storage | Feishu Base | Free |
+| Automation | GitHub Actions | Free for public repositories |
+
+### Setup
+
+#### 1. Fork or clone this repository
+
+Fork the repository to your own GitHub account, or clone it locally if you want to customize the script.
+
+#### 2. Configure GitHub Actions secrets
+
+Go to `Settings` -> `Secrets and variables` -> `Actions` -> `New repository secret`, then add the following secrets:
+
+| Secret name | Description |
+| --- | --- |
+| `FEISHU_APP_ID` | App ID of your Feishu custom app |
+| `FEISHU_APP_SECRET` | App Secret of your Feishu custom app |
+| `FEISHU_APP_TOKEN` | Token from the Feishu Base URL after `/base/` |
+| `FEISHU_TABLE_ID` | Table parameter from the Feishu Base URL, usually starting with `tbl` |
+| `FEISHU_WEBHOOK` | Feishu bot webhook URL |
+| `OPENROUTER_API_KEY` | OpenRouter API key, usually starting with `sk-or-v1-` |
+
+#### 3. Create Feishu Base fields
+
+Your Feishu table should include the following fields. Text fields are recommended:
+
+| Field | Content |
+| --- | --- |
+| `拆解书名` | Main book or topic discussed in the episode |
+| `标题` | Podcast episode title |
+| `发布日期` | Episode publish date |
+| `原链接` | Original episode link, used for deduplication |
+| `核心认知` | Timestamped insights from RSS or AI-generated insights |
+| `金句` | Highlights or AI-generated quotes |
+| `书单` | Other books mentioned in the episode |
+| `完整转录` | Full transcript generated by Faster-Whisper |
+| `处理状态` | Processing status |
+
+#### 4. Run the workflow
+
+- Automatic run: GitHub Actions runs once per day at 01:00 UTC, which is 9:00 AM Beijing time.
+- Manual run: Open the repository `Actions` page, choose the workflow, and click `Run workflow`.
+
+### Notes
+
+- The first run downloads the Faster-Whisper `large-v3` model, which is about 3GB. Later runs use the cache.
+- Long episodes take time to process. An 85-minute episode usually takes about 30-90 minutes end to end.
+- Episodes already saved in Feishu are skipped automatically using the `原链接` field.
+- To process a different podcast, update `RSS_URL` in `main.py`.
+
+<p align="right"><a href="#top"><kbd>Back to top</kbd></a></p>
