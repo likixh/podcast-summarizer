@@ -45,7 +45,7 @@ def extract_from_description(entry, episode_title):
     description = re.sub(r"\r\n", "\n", description)
     description = re.sub(r"\n{3,}", "\n\n", description)
 
-    print(f"  RSS 简介（前1000字）：\n{description[:1000]}\n")
+    print(f"  RSS 简介已解析：{len(description)} 字")
 
     # ── 1. 拆解书名：优先从标题提取《书名》，否则从简介第一个《》提取 ──
     book_name = ""
@@ -57,7 +57,7 @@ def extract_from_description(entry, episode_title):
         title_core = re.sub(r"^\d+\s*", "", episode_title)  # 去掉集数
         title_core = title_core.split("｜")[0].split("|")[0].strip()
         book_name = title_core
-    print(f"  ✅ 拆解书名：{book_name}")
+    print(f"  ✅ 拆解书名：已提取")
 
     # ── 2. Highlights：匹配 Highlights 到第一个时间戳之间的内容 ──
     highlights = ""
@@ -75,7 +75,6 @@ def extract_from_description(entry, episode_title):
         cleaned = [l.rstrip("*").strip() for l in cleaned if l]
         highlights = "\n".join(f"• {l}" for l in cleaned)
         print(f"  ✅ 提取到 Highlights：{len(cleaned)} 条")
-        print(f"  内容：\n{highlights}\n")
     else:
         print("  ℹ️  未找到 Highlights")
 
@@ -89,7 +88,6 @@ def extract_from_description(entry, episode_title):
         valid = [t.strip() for t in timestamp_matches if len(t.strip()) >= 8]
         core_insights = "\n".join(f"• {t}" for t in valid)
         print(f"  ✅ 从时间戳提取核心认知：{len(valid)} 条")
-        print(f"  内容：\n{core_insights[:300]}\n")
     else:
         print("  ℹ️  未找到时间戳，核心认知将由 AI 提取")
 
@@ -102,7 +100,6 @@ def extract_from_description(entry, episode_title):
     booklist = "\n".join(f"• 《{b}》" for b in unique_books)
     if booklist:
         print(f"  ✅ 提取到书单：{len(unique_books)} 本")
-        print(f"  内容：\n{booklist}\n")
     else:
         print("  ℹ️  未找到其他书单，将由 AI 提取")
 
@@ -148,10 +145,10 @@ def write_to_feishu(fields):
         f"https://open.feishu.cn/open-apis/bitable/v1/"
         f"apps/{FEISHU_APP_TOKEN}/tables/{FEISHU_TABLE_ID}/records"
     )
-    print(f"  写入字段：{list(fields.keys())}")
+    print(f"  写入字段数：{len(fields)}")
     resp = requests.post(url, headers=headers, json={"fields": fields}, timeout=30)
     data = resp.json()
-    print(f"  飞书响应：{json.dumps(data, ensure_ascii=False)[:400]}")
+    print(f"  飞书写入：status={resp.status_code} code={data.get('code')} msg={data.get('msg')}")
     resp.raise_for_status()
     return data
 
@@ -179,14 +176,18 @@ def send_feishu_notification(title, date, link):
         }
     }
     resp = requests.post(FEISHU_WEBHOOK, json=msg, timeout=10)
-    print(f"  机器人通知：{resp.json()}")
+    try:
+        data = resp.json()
+        print(f"  机器人通知：status={resp.status_code} code={data.get('code')} msg={data.get('msg')}")
+    except ValueError:
+        print(f"  机器人通知：status={resp.status_code}")
 
 
 # ============================================================
 # 音频下载
 # ============================================================
 def download_audio(episode_url, output_path):
-    print(f"  下载：{episode_url}")
+    print("  下载音频：开始")
     subprocess.run(
         ["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "32K",
          "--postprocessor-args", "-ac 1", "-o", output_path, episode_url],
@@ -266,9 +267,9 @@ def summarize_with_ai(transcript, episode_title, need_quotes, need_booklist, nee
                 timeout=120,
             )
             resp_json = resp.json()
-            print(f"  API 响应：{json.dumps(resp_json, ensure_ascii=False)[:400]}")
+            print(f"  API 响应：status={resp.status_code} has_choices={'choices' in resp_json}")
             if "choices" not in resp_json:
-                raise ValueError(f"无 choices：{resp_json}")
+                raise ValueError("无 choices")
 
             # 处理部分模型返回 content=null 但有 reasoning 的情况
             message = resp_json["choices"][0]["message"]
@@ -285,7 +286,7 @@ def summarize_with_ai(transcript, episode_title, need_quotes, need_booklist, nee
             print(f"  AI 总结成功（{model_name}）")
             return result
         except Exception as e:
-            print(f"  {model_name} 失败：{e}")
+            print(f"  {model_name} 失败：{type(e).__name__}")
             time.sleep(5)
 
     print("  所有模型失败，返回空")
@@ -300,8 +301,7 @@ def process_episode(episode):
     episode_title = episode.get("title", "未知标题")
     episode_date  = episode.get("published", "")
 
-    print(f"\n  处理：{episode_title}")
-    print(f"  链接：{episode_url}")
+    print("\n  处理单集：开始")
 
     # 1. 从 RSS 提取所有字段
     print("\n📋 解析 RSS 简介...")
@@ -347,7 +347,7 @@ def process_episode(episode):
     }
     result = write_to_feishu(fields)
     record_id = result.get("data", {}).get("record", {}).get("record_id", "未知")
-    print(f"  记录 ID：{record_id}")
+    print(f"  写入结果：record_id_present={record_id != '未知'}")
 
     # 6. 飞书通知
     print("\n🔔 发送飞书通知...")
