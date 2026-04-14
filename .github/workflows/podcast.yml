@@ -38,6 +38,27 @@ jobs:
           pip install --upgrade pip
           pip install faster-whisper feedparser requests yt-dlp
 
+      - name: 🔒 屏蔽敏感配置
+        env:
+          FEISHU_APP_ID:      ${{ secrets.FEISHU_APP_ID }}
+          FEISHU_APP_SECRET:  ${{ secrets.FEISHU_APP_SECRET }}
+          FEISHU_APP_TOKEN:   ${{ secrets.FEISHU_APP_TOKEN }}
+          FEISHU_TABLE_ID:    ${{ secrets.FEISHU_TABLE_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FEISHU_WEBHOOK:     ${{ secrets.FEISHU_WEBHOOK }}
+        run: |
+          for value in \
+            "$FEISHU_APP_ID" \
+            "$FEISHU_APP_SECRET" \
+            "$FEISHU_APP_TOKEN" \
+            "$FEISHU_TABLE_ID" \
+            "$OPENROUTER_API_KEY" \
+            "$FEISHU_WEBHOOK"; do
+            if [ -n "$value" ]; then
+              echo "::add-mask::$value"
+            fi
+          done
+
       - name: 🚀 运行播客处理脚本
         env:
           FEISHU_APP_ID:      ${{ secrets.FEISHU_APP_ID }}

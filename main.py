@@ -7,6 +7,15 @@ import requests
 import subprocess
 import tempfile
 
+
+def mask_for_github_actions(value):
+    if not os.environ.get("GITHUB_ACTIONS") or not value:
+        return
+    for line in str(value).splitlines():
+        if line:
+            print(f"::add-mask::{line}")
+
+
 # ============================================================
 # 配置
 # ============================================================
@@ -189,9 +198,12 @@ def send_feishu_notification(title, date, link):
 def download_audio(episode_url, output_path):
     print("  下载音频：开始")
     subprocess.run(
-        ["yt-dlp", "-x", "--audio-format", "mp3", "--audio-quality", "32K",
+        ["yt-dlp", "--quiet", "--no-warnings", "--no-progress",
+         "-x", "--audio-format", "mp3", "--audio-quality", "32K",
          "--postprocessor-args", "-ac 1", "-o", output_path, episode_url],
         check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
     )
 
 
@@ -300,6 +312,8 @@ def process_episode(episode):
     episode_url   = episode.get("link", "")
     episode_title = episode.get("title", "未知标题")
     episode_date  = episode.get("published", "")
+    mask_for_github_actions(episode_url)
+    mask_for_github_actions(episode_title)
 
     print("\n  处理单集：开始")
 
